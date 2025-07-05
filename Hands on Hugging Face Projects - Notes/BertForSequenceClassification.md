@@ -146,3 +146,334 @@ You can also ask it to return:
 | `forward()`                     | Run the model. Usually called indirectly via `__call__`. |
 
 ---
+
+### ✅ Actual TrainingArguments of the transformer:
+- To get the acual arguments, have a look at the transformer code and documentation.
+- Then, select the needed arguments and strat training.
+
+```python
+from transformers import TrainingArguments
+
+training_args = TrainingArguments(
+    output_dir="./results",
+    evaluation_strategy="steps",
+    eval_steps=500,
+    save_strategy="steps",
+    save_steps=500,
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
+    num_train_epochs=3,
+    logging_dir="./logs",
+    logging_steps=10,
+    load_best_model_at_end=True,
+    metric_for_best_model="accuracy",
+)
+```
+
+---
+
+  *Note*
+
+* Run this on GPU if you have enough VRAM by set the argument `no_cuda=False`.
+* Use `Trainer` for training and evaluation.
+* Export predictions or evaluation results
+
+Great! Since you're using the 🤗 `Trainer` and `TrainingArguments`, your training metrics are automatically logged during training.
+
+---
+
+### ✅ Plotting the evolution of metrics (loss & accuracy) over training steps
+
+We'll use the `trainer.state.log_history`, which stores all logs including:
+
+* `loss`
+* `eval_loss`
+* `eval_accuracy`
+* `step`
+
+---
+
+### ✅ Code: Plotting loss & accuracy from `trainer.state.log_history`
+
+```python
+import matplotlib.pyplot as plt
+
+# Extract logged history
+logs = trainer.state.log_history
+
+# Prepare lists for plotting
+steps = []
+train_loss = []
+eval_loss = []
+eval_accuracy = []
+
+for entry in logs:
+    if 'loss' in entry and 'step' in entry:
+        train_loss.append(entry['loss'])
+        steps.append(entry['step'])
+    if 'eval_loss' in entry:
+        eval_loss.append(entry['eval_loss'])
+    if 'eval_accuracy' in entry:
+        eval_accuracy.append(entry['eval_accuracy'])
+
+# Plot training & evaluation loss
+plt.figure(figsize=(12, 5))
+
+plt.subplot(1, 2, 1)
+plt.plot(steps, train_loss, label='Training Loss')
+plt.plot(steps[:len(eval_loss)], eval_loss, label='Validation Loss')
+plt.xlabel("Steps")
+plt.ylabel("Loss")
+plt.title("Loss over Training Steps")
+plt.legend()
+
+# Plot accuracy
+plt.subplot(1, 2, 2)
+plt.plot(steps[:len(eval_accuracy)], eval_accuracy, label='Validation Accuracy', color='green')
+plt.xlabel("Steps")
+plt.ylabel("Accuracy")
+plt.title("Validation Accuracy over Steps")
+plt.legend()
+
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+### 🔍 Notes:
+
+* This works **without TensorBoard**, using only `trainer.state.log_history`.
+* Make sure you’ve run `trainer.train()` first so `log_history` is populated.
+* If accuracy doesn’t appear, double-check that your `compute_metrics()` is correctly defined and passed.
+
+---
+
+### 📦 Optional: Save Plots to File
+
+If you want to save the figures:
+
+```python
+plt.savefig("training_metrics.png")
+```
+
+---
+
+- Here's how to plot training, validation, and test accuracy in a single graph after training your model using Hugging Face's Trainer.
+
+
+### ✅ Step-by-Step Breakdown:
+
+1. **Training Accuracy**:
+
+   * Logged during training via `log_history`.
+
+2. **Validation Accuracy**:
+
+   * Also logged automatically if `evaluation_strategy='steps'` and `compute_metrics` is set.
+
+3. **Test Accuracy**:
+
+   * Must be manually evaluated using `trainer.evaluate(test_dataset)`.
+
+---
+
+### ✅ Full Code: Plot Train, Validation, and Test Accuracy
+
+```python
+import matplotlib.pyplot as plt
+
+# Step 1: Evaluate on test dataset after training
+test_metrics = trainer.evaluate(test_encoded)
+test_accuracy = test_metrics["eval_accuracy"]
+print("✅ Test Accuracy:", test_accuracy)
+
+# Step 2: Extract from log history
+logs = trainer.state.log_history
+train_steps, train_loss, val_loss, val_accuracy = [], [], [], []
+
+for entry in logs:
+    if 'loss' in entry and 'step' in entry:
+        train_steps.append(entry['step'])
+        train_loss.append(entry['loss'])
+    if 'eval_accuracy' in entry:
+        val_accuracy.append(entry['eval_accuracy'])
+    if 'eval_loss' in entry:
+        val_loss.append(entry['eval_loss'])
+
+# Step 3: Plot accuracy
+plt.figure(figsize=(10, 6))
+
+# Plot validation accuracy
+plt.plot(train_steps[:len(val_accuracy)], val_accuracy, label="Validation Accuracy", marker='o', color='blue')
+
+# Plot test accuracy as horizontal line
+plt.axhline(y=test_accuracy, color='red', linestyle='--', label=f"Test Accuracy: {test_accuracy:.3f}")
+
+# Optional: Plot training loss curve (for reference)
+plt.plot(train_steps, train_loss, label="Training Loss", linestyle='dotted', color='gray')
+
+plt.xlabel("Training Steps")
+plt.ylabel("Accuracy / Loss")
+plt.title("Model Accuracy Over Time")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+plt.show()
+```
+
+---
+
+### 📌 Notes:
+
+* **Training Accuracy** is **not automatically computed** unless you do it manually or via metrics logging. Hugging Face `Trainer` typically logs only:
+
+  * `train_loss`
+  * `eval_loss`
+  * `eval_accuracy`
+
+* If you want **true training accuracy**, you can evaluate on `train_dataset`:
+
+  ```python
+  train_metrics = trainer.evaluate(train_dataset)
+  print("Train Accuracy:", train_metrics["eval_accuracy"])
+  ```
+
+* Then add:
+
+  ```python
+  plt.axhline(y=train_metrics["eval_accuracy"], color='green', linestyle='--', label=f"Train Accuracy: {train_metrics['eval_accuracy']:.3f}")
+  ```
+
+---
+
+### ✅ Final Result:
+
+You’ll get a plot showing:
+
+* **Validation accuracy (curve)**
+* **Test accuracy (dashed red line)**
+* **(Optional) Train accuracy (dashed green line)**
+* **Training loss (dotted gray line)**
+
+If the Hugging Face `Trainer` training or evaluation is taking a long time, there are several possible **bottlenecks**, especially since you're running with `no_cuda=True` (CPU only):
+
+---
+
+### 🔍 Reasons Why It's Slow
+
+#### 1. **Running on CPU (`no_cuda=True`)**
+
+* Training transformer models like BERT or RoBERTa on CPU is **extremely slow**.
+* Even a small dataset can take **minutes to hours per epoch**.
+
+✅ **Solution**:
+
+* If you have a GPU, remove `no_cuda=True` or set it to `False`:
+
+  ```python
+  no_cuda=False
+  ```
+
+  Hugging Face will automatically use the available GPU.
+
+To check if GPU is available:
+
+```python
+from transformers import is_torch_available
+import torch
+print("GPU Available:", torch.cuda.is_available())
+```
+
+---
+
+#### 2. **Model Size**
+
+* Even a **base transformer** (like BERT-base or DistilBERT) has \~100M+ parameters.
+* On CPU, matrix operations are not optimized for deep learning workloads.
+
+---
+
+#### 3. **Large Batch Size**
+
+* Larger `per_device_train_batch_size` consumes more memory and time per step.
+* You are using `batch_size=8`, which is reasonable on CPU, but still adds up.
+
+✅ Try `batch_size=4` if memory or CPU is limited:
+
+```python
+per_device_train_batch_size=4
+```
+
+---
+
+#### 4. **Logging, Evaluation, and Saving Too Frequently**
+
+* You are evaluating & saving **every 500 steps**. On CPU, this is expensive.
+
+✅ Solution:
+
+* Increase intervals:
+
+```python
+eval_steps=1000
+save_steps=1000
+logging_steps=100
+```
+
+---
+
+#### 5. **Number of Epochs**
+
+* Even 3 epochs on CPU = 3 full dataset passes = slow.
+
+✅ Solution:
+
+* Start with `num_train_epochs=1` for faster experimentation.
+
+---
+
+#### 6. **Dataset Size**
+
+* You’re training on 4000 samples and evaluating on 1000.
+* Depending on the model and sequence length, that’s still compute-heavy on CPU.
+
+✅ Try smaller samples for initial runs:
+
+```python
+train_dataset = train_encoded.select(range(1000))
+eval_dataset = train_encoded.select(range(1000, 1200))
+```
+
+---
+
+### ✅ Recommended Fast Debug Settings
+
+Use these settings to iterate fast during development:
+
+```python
+TrainingArguments(
+    ...
+    num_train_epochs=1,
+    per_device_train_batch_size=4,
+    per_device_eval_batch_size=4,
+    eval_steps=1000,
+    save_steps=1000,
+    logging_steps=50,
+    no_cuda=False,  # if you have a GPU
+)
+```
+
+---
+
+### 💡 Suggestions due to avoid long time of training
+
+| Problem            | Solution                                |
+| ------------------ | --------------------------------------- |
+| Using CPU only     | Use GPU (`no_cuda=False`)               |
+| Large model        | Try DistilBERT or smaller models        |
+| Frequent eval/save | Increase `eval_steps` and `save_steps`  |
+| High batch size    | Reduce to 4 or 2                        |
+| Too many epochs    | Use `num_train_epochs=1` during testing |
+| Dataset size       | Use `select()` to sample fewer examples |
+
